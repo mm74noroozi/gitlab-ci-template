@@ -1,0 +1,65 @@
+
+stages:
+  - build-node
+  - build-image
+  - deploy
+
+variables:
+  TAG: v${CI_PIPELINE_IID}
+  IMAGE: docker.mofid.dev/$CI_PROJECT_PATH/$CI_COMMIT_BRANCH:$CI_COMMIT_SHORT_SHA
+  # IMAGE: docker.mofid.dev/$CI_PROJECT_PATH/$CI_COMMIT_BRANCH:$CI_PIPELINE_IID
+
+build-node-production: # todo add chrome headless to run unit test
+  stage: build-node
+  tags:
+    - external
+  image: 
+    name: node:14.15
+  script:
+    - rm -rf Pooya.WebClient/dist/
+    - npm install
+    - CI=false npm run build
+  cache:
+    key: $CI_COMMIT_REF_SLUG
+    paths: 
+      - ./node_module
+  artifacts: 
+    paths: 
+    - ./Pooya.WebClient/dist/
+  only:
+    - afra_prod
+
+build-image-prod:
+  stage: build-image
+  tags:
+    - external
+  image: 
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo $DOCKER_AUTH_CONFIG > /kaniko/.docker/config.json
+    - /kaniko/executor --cache=true --context $CI_PROJECT_DIR --dockerfile $CI_PROJECT_DIR/Dockerfile --destination $IMAGE
+  only:
+    - afra_prod
+    
+deploy-production: # todo use portianer to pull new image and restart service
+  stage: deploy
+  tags:
+    - shell
+  before_script:
+    - echo '172.23.151.1 portainer.pouyafinance.local' >> /etc/hosts
+  script:
+    - curl -X POST $PORTAINER_WEBHOOK_PROD?tag=$CI_COMMIT_SHORT_SHA
+  when: manual
+  only: 
+  - afra_prod
+
+rollback-deploy:
+  stage: deploy
+  script:
+    - PREVIOUS_COMMIT_SHORT_SHA=$(git log -2 --pretty="%h" | tail -1)
+    - curl -X POST $PORTAINER_WEBHOOK_PROD?tag=$PREVIOUS_COMMIT_SHORT_SHA
+  when: manual
+  only: 
+  - afra_prod
